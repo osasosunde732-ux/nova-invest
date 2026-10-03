@@ -1,5 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { createAccount, getProfile, validateReferral, type UserProfile } from "./lib/api";
+import {
+  allocateSandboxInvestment, createAccount, createSandboxRequest,
+  getAdminOverview, getProfile, getSandboxAccount, reviewSandboxRequest,
+  settleSandboxInvestment, updateSandboxKyc, validateReferral,
+  type LedgerEntry, type SandboxInvestment, type SandboxRequest, type UserProfile,
+} from "./lib/api";
 import { supabase } from "./lib/supabase";
 
 // ─── Theme tokens ─────────────────────────────────────────────────────────────
@@ -15,7 +20,7 @@ type Screen =
   | "transactions" | "invest" | "investment-plans"
   | "staking" | "copy-trading" | "analytics"
   | "notifications" | "security" | "settings" | "kyc" | "help"
-  | "tx-success" | "error" | "profit-code" | "referral";
+  | "tx-success" | "error" | "profit-code" | "referral" | "admin";
 
 type MainTab = "home" | "markets" | "trade" | "earn" | "profile";
 
@@ -438,7 +443,8 @@ function SideMenu({ navigate, onClose, profile }: { navigate:(s:Screen)=>void; o
 function HomeScreen({ navigate, showDeposit, profile }: { navigate:(s:Screen)=>void; showDeposit:()=>void; profile:UserProfile|null }) {
   const [bal,setBal]=useState(true);
   const [menuOpen,setMenuOpen]=useState(false);
-  const total=PORTFOLIO.reduce((s,a)=>s+a.value,0);
+  const [sandboxTotal,setSandboxTotal]=useState(0);
+  useEffect(()=>{if(profile)getSandboxAccount().then(d=>setSandboxTotal(d.account.available+d.account.invested)).catch(()=>{});},[profile]);
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {menuOpen&&<SideMenu navigate={navigate} onClose={()=>setMenuOpen(false)} profile={profile}/>}
@@ -462,12 +468,12 @@ function HomeScreen({ navigate, showDeposit, profile }: { navigate:(s:Screen)=>v
             </button>
           </div>
         </div>
-        {/* Total Assets */}
-        <p className="text-[#aaa] text-sm mb-2">Total Assets</p>
+        {/* Sandbox balance */}
+        <p className="text-[#aaa] text-sm mb-2">Total Sandbox Balance</p>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="text-white text-xl font-bold font-mono">
-              {bal ? `$${total.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}` : "● ● ● ● ●"}
+              {bal ? `${sandboxTotal.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} TUSDT` : "● ● ● ● ●"}
             </span>
             <button onClick={()=>setBal(v=>!v)} className="text-[#888] hover:text-white transition-colors">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-5 h-5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -729,20 +735,22 @@ function SwapScreen({ navigate, goBack }: { navigate:(s:Screen)=>void; goBack:()
 
 // ─── Wallet ───────────────────────────────────────────────────────────────────
 function WalletScreen({ navigate, showDeposit }: { navigate:(s:Screen)=>void; showDeposit:()=>void }) {
-  const total=PORTFOLIO.reduce((s,a)=>s+a.value,0);
+  const [available,setAvailable]=useState(0); const [invested,setInvested]=useState(0);
+  useEffect(()=>{getSandboxAccount().then(d=>{setAvailable(d.account.available);setInvested(d.account.invested);}).catch(()=>{});},[]);
+  const total=available+invested;
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <DarkHeader
         left={<h1 className="text-lg font-bold text-white">Wallet</h1>}
-        title={<><p className="text-[#aaa] text-xs mb-1">Total Balance</p><p className="text-2xl font-bold text-white font-mono">${total.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</p><p className="text-[#00c896] text-xs font-mono mt-0.5">+12.48% (24h)</p><div className="flex gap-2 mt-3">{[{l:"Deposit",a:showDeposit},{l:"Send",a:()=>navigate("withdraw")},{l:"Receive",a:()=>navigate("receive")}].map(b=><button key={b.l} onClick={b.a} className="flex-1 py-2 rounded-xl border border-white/20 text-white text-xs font-semibold bg-white/10 hover:bg-white/20 transition-colors">{b.l}</button>)}</div></>}
+        title={<><p className="text-[#aaa] text-xs mb-1">Total Sandbox Balance</p><p className="text-2xl font-bold text-white font-mono">{total.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} TUSDT</p><p className="text-amber-400 text-xs font-mono mt-0.5">Test credits · no cash value</p><div className="flex gap-2 mt-3">{[{l:"Request",a:showDeposit},{l:"Withdraw",a:()=>navigate("withdraw")},{l:"Ledger",a:()=>navigate("transactions")}].map(b=><button key={b.l} onClick={b.a} className="flex-1 py-2 rounded-xl border border-white/20 text-white text-xs font-semibold bg-white/10 hover:bg-white/20 transition-colors">{b.l}</button>)}</div></>}
       />
       <div className="flex-1 overflow-y-auto bg-[#f4f5f7] px-4 pt-4 pb-4">
-        <h2 className="text-sm font-bold text-[#111] mb-3">Assets</h2>
+        <h2 className="text-sm font-bold text-[#111] mb-3">Sandbox account</h2>
         <Card className="overflow-hidden mb-24">
-          {PORTFOLIO.map((a,i)=>(
-            <div key={a.symbol} className={`flex items-center gap-3 px-4 py-3.5 ${i<PORTFOLIO.length-1?"border-b border-[#f5f5f5]":""}`}>
-              <CoinIcon symbol={a.symbol} color={a.color}/><div className="flex-1"><p className="text-sm font-semibold text-[#111]">{a.symbol}</p><p className="text-xs text-[#aaa] font-mono">{a.amount}</p></div>
-              <p className="text-sm font-semibold text-[#111] font-mono">${a.value.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</p>
+          {[["Available",available],["Invested",invested]].map(([label,value],i)=>(
+            <div key={String(label)} className={`flex items-center gap-3 px-4 py-4 ${i===0?"border-b border-[#f5f5f5]":""}`}>
+              <div className="w-9 h-9 rounded-full bg-[#00c896]/10 flex items-center justify-center text-[#00c896] font-bold text-xs">T</div><div className="flex-1"><p className="text-sm font-semibold text-[#111]">{label}</p><p className="text-xs text-[#aaa]">Sandbox TUSDT</p></div>
+              <p className="text-sm font-semibold text-[#111] font-mono">{Number(value).toFixed(2)}</p>
             </div>
           ))}
         </Card>
@@ -791,114 +799,57 @@ function USDTQRCode({ size=180 }: { size?:number }) {
 
 // ─── Deposit Screen ───────────────────────────────────────────────────────────
 function DepositScreen({ goBack }: { goBack:()=>void }) {
-  const [network,setNetwork]=useState<"TRC20"|"ERC20">("TRC20");
-  const [copied,setCopied]=useState(false);
-  const addr=network==="TRC20"?USDT_TRC20:USDT_ERC20;
-  function copy(){
-    navigator.clipboard?.writeText(addr).catch(()=>{});
-    setCopied(true);
-    setTimeout(()=>setCopied(false),2000);
+  const [amount,setAmount]=useState(""); const [reference,setReference]=useState("");
+  const [status,setStatus]=useState(""); const [loading,setLoading]=useState(false);
+  async function submit(){
+    setLoading(true);setStatus("");
+    try{await createSandboxRequest({type:"deposit",amount:Number(amount),detail:reference||"Test credit request"});setStatus("Test deposit request submitted for admin review.");setAmount("");setReference("");}
+    catch(e){setStatus(e instanceof Error?e.message:"Request failed.");}
+    finally{setLoading(false);}
   }
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <DarkHeader left={<><BackButton onBack={goBack} light/><div className="ml-2"><h1 className="text-base font-bold text-white">Deposit USDT</h1><p className="text-[10px] text-[#888]">Send USDT to your wallet</p></div></>}/>
+      <DarkHeader left={<><BackButton onBack={goBack} light/><div className="ml-2"><h1 className="text-base font-bold text-white">Request Test Funds</h1><p className="text-[10px] text-[#888]">Sandbox credits only</p></div></>}/>
       <div className="flex-1 overflow-y-auto bg-[#f4f5f7] px-4 pt-4 pb-8 flex flex-col gap-3">
-        {/* Network selector */}
-        <div className="flex gap-2">
-          <Chip label="TRC20 (TRON)" active={network==="TRC20"} onClick={()=>setNetwork("TRC20")}/>
-          <Chip label="ERC20 (Ethereum)" active={network==="ERC20"} onClick={()=>setNetwork("ERC20")}/>
-        </div>
-        {/* Warning */}
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 flex gap-2">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="1.5" className="w-4 h-4 flex-shrink-0 mt-0.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          <p className="text-xs text-amber-700 leading-relaxed">Only send <strong>USDT</strong> on the <strong>{network}</strong> network. Sending other tokens may result in permanent loss.</p>
-        </div>
-        {/* QR + Address */}
-        <Card className="p-5 flex flex-col items-center">
-          <p className="text-xs text-[#888] mb-4 font-medium">Scan to deposit USDT ({network})</p>
-          <div className="p-3 bg-white rounded-2xl border border-[#f0f0f0] shadow-sm mb-4">
-            <USDTQRCode size={180}/>
-          </div>
-          <div className="w-full flex items-center gap-2 bg-gray-50 border border-[#e5e7eb] rounded-xl px-3 py-3 mb-2">
-            <span className="text-xs text-[#555] font-mono flex-1 break-all leading-relaxed">{addr}</span>
-            <button onClick={copy} className={`text-xs font-bold flex-shrink-0 px-3 py-1.5 rounded-lg transition-colors ${copied?"bg-[#00c896] text-white":"bg-[#00c896]/10 text-[#00c896]"}`}>{copied?"✓ Copied":"Copy"}</button>
-          </div>
-          <p className="text-[10px] text-[#bbb] text-center">Minimum deposit: $50 USDT</p>
-        </Card>
-        {/* Notes */}
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4"><p className="text-xs font-bold text-amber-800">SANDBOX — DO NOT SEND MONEY</p><p className="text-xs text-amber-700 mt-1 leading-relaxed">This creates a test request only. No wallet address, bank transfer, blockchain payment, or real USDT is involved.</p></div>
         <Card className="p-4">
-          <p className="text-xs font-semibold text-[#111] mb-2">Important Notes</p>
-          <div className="flex flex-col gap-2">
-            {["Deposits are credited after compliance verification","Your deposit and withdrawal wallet address are the same","Contact support@novainvest.app for any queries"].map((n,i)=>(
-              <div key={i} className="flex items-start gap-2">
-                <div className="w-4 h-4 rounded-full bg-[#00c896]/15 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#00c896]"/>
-                </div>
-                <p className="text-xs text-[#666] leading-relaxed">{n}</p>
-              </div>
-            ))}
-          </div>
+          <label className="text-xs text-[#666] mb-2 block font-medium">Test amount (TUSDT)</label>
+          <input value={amount} onChange={e=>setAmount(e.target.value.replace(/[^\d.]/g,""))} inputMode="decimal" placeholder="1000.00" className="w-full bg-gray-50 border border-[#e5e7eb] rounded-xl px-4 py-3 text-lg font-mono outline-none focus:border-[#00c896]"/>
+          <label className="text-xs text-[#666] mb-2 mt-4 block font-medium">Test reference</label>
+          <input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Reason for sandbox credit" className="w-full bg-gray-50 border border-[#e5e7eb] rounded-xl px-4 py-3 text-sm outline-none focus:border-[#00c896]"/>
         </Card>
+        {status&&<p className={`text-xs rounded-xl px-3 py-2 border ${status.includes("submitted")?"text-[#007b5d] bg-[#00c896]/10 border-[#00c896]/20":"text-red-600 bg-red-50 border-red-200"}`}>{status}</p>}
+        <GreenBtn label={loading?"Submitting…":"Submit Test Deposit Request"} onClick={submit} disabled={loading||!Number(amount)}/>
       </div>
     </div>
   );
 }
 
 // ─── Withdraw ─────────────────────────────────────────────────────────────────
-function WithdrawScreen({ navigate, goBack }: { navigate:(s:Screen)=>void; goBack:()=>void }) {
-  const [amt,setAmt]=useState("");
-  const available=35100.22;
-  const fee=1;
-  const youReceive=amt?Math.max(0,parseFloat(amt)-fee).toFixed(2):"—";
+function WithdrawScreen({ navigate:_, goBack }: { navigate:(s:Screen)=>void; goBack:()=>void }) {
+  const [amount,setAmount]=useState(""); const [wallet,setWallet]=useState("");
+  const [available,setAvailable]=useState(0); const [status,setStatus]=useState(""); const [loading,setLoading]=useState(false);
+  useEffect(()=>{getSandboxAccount().then(d=>setAvailable(d.account.available)).catch(()=>{});},[]);
+  async function submit(){
+    setLoading(true);setStatus("");
+    try{await createSandboxRequest({type:"withdrawal",amount:Number(amount),detail:wallet||"Sandbox Binance wallet"});setStatus("Test withdrawal request submitted for admin review.");setAmount("");}
+    catch(e){setStatus(e instanceof Error?e.message:"Request failed.");}
+    finally{setLoading(false);}
+  }
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <DarkHeader left={<><BackButton onBack={goBack} light/><div className="ml-2"><h1 className="text-base font-bold text-white">Withdraw USDT</h1><p className="text-[10px] text-[#888]">To your verified Binance wallet</p></div></>}/>
+      <DarkHeader left={<><BackButton onBack={goBack} light/><div className="ml-2"><h1 className="text-base font-bold text-white">Test Withdrawal</h1><p className="text-[10px] text-[#888]">No real transfer will occur</p></div></>}/>
       <div className="flex-1 overflow-y-auto bg-[#f4f5f7] px-4 pt-4 pb-8 flex flex-col gap-3">
-        {/* Binance locked wallet card */}
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4"><p className="text-xs font-bold text-amber-800">SANDBOX TUSDT</p><p className="text-xs text-amber-700 mt-1">Approval only changes the test ledger. It never sends crypto.</p></div>
+        <Card className="p-4"><p className="text-xs text-[#888]">Available test balance</p><p className="text-2xl font-black font-mono text-[#111] mt-1">{available.toLocaleString("en-US",{minimumFractionDigits:2})} TUSDT</p></Card>
         <Card className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs text-[#888] font-medium">Withdrawal Wallet</p>
-            <div className="flex items-center gap-1 bg-[#00c896]/10 border border-[#00c896]/30 rounded-full px-2 py-0.5">
-              <svg viewBox="0 0 24 24" fill="none" stroke="#00c896" strokeWidth="2.5" className="w-3 h-3"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              <span className="text-[10px] font-bold text-[#00c896]">KYC Approved</span>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 bg-[#FDF3D0] border border-[#F0B90B]/30 rounded-xl p-3">
-            <div className="w-10 h-10 rounded-full bg-[#F0B90B] flex items-center justify-center flex-shrink-0 shadow-sm">
-              <span className="text-sm font-black text-white">B</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-[#333]">Binance Wallet</p>
-              <p className="text-[10px] text-[#888] font-mono mt-0.5 truncate">{USDT_TRC20}</p>
-            </div>
-            <svg viewBox="0 0 24 24" fill="none" stroke="#bbb" strokeWidth="1.5" className="w-5 h-5 flex-shrink-0"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4" strokeLinecap="round"/></svg>
-          </div>
-          <p className="text-[10px] text-[#bbb] mt-2 leading-relaxed">
-            This is your KYC-verified Binance wallet. To change your withdrawal wallet, please contact support.
-          </p>
+          <label className="text-xs text-[#666] mb-2 block font-medium">Amount (TUSDT)</label>
+          <div className="flex gap-2"><input value={amount} onChange={e=>setAmount(e.target.value.replace(/[^\d.]/g,""))} inputMode="decimal" placeholder="0.00" className="flex-1 min-w-0 bg-gray-50 border border-[#e5e7eb] rounded-xl px-4 py-3 text-lg font-mono outline-none focus:border-[#00c896]"/><button onClick={()=>setAmount(String(available))} className="px-3 rounded-xl bg-[#00c896]/10 text-[#00c896] text-xs font-bold">MAX</button></div>
+          <label className="text-xs text-[#666] mb-2 mt-4 block font-medium">Mock Binance wallet reference</label>
+          <input value={wallet} onChange={e=>setWallet(e.target.value)} placeholder="Sandbox address or account label" className="w-full bg-gray-50 border border-[#e5e7eb] rounded-xl px-4 py-3 text-sm outline-none focus:border-[#00c896]"/>
         </Card>
-        {/* Info */}
-        <div className="bg-blue-50 border border-blue-100 rounded-2xl p-3 flex gap-2">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" className="w-4 h-4 flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4" strokeLinecap="round"/><circle cx="12" cy="16" r="0.5" fill="#3b82f6" strokeWidth="1"/></svg>
-          <p className="text-xs text-blue-700 leading-relaxed">Only Binance wallets are accepted. Third-party wallets are not permitted per our compliance policy. Your deposit and withdrawal address are the same.</p>
-        </div>
-        {/* Amount */}
-        <Card className="p-4">
-          <p className="text-xs text-[#888] mb-2 font-medium">Withdrawal Amount (USDT)</p>
-          <div className="flex items-center gap-2 bg-gray-50 border border-[#e5e7eb] rounded-xl px-3 py-3">
-            <input value={amt} onChange={e=>setAmt(e.target.value)} placeholder="0.00" className="flex-1 text-xl font-bold font-mono bg-transparent text-[#111] placeholder-[#ddd] outline-none"/>
-            <span className="text-xs text-[#aaa] font-mono flex-shrink-0">USDT</span>
-            <button onClick={()=>setAmt(String(available))} className="text-xs text-[#00c896] font-semibold flex-shrink-0 px-2 py-1 bg-[#00c896]/10 rounded-lg">MAX</button>
-          </div>
-          <p className="text-[10px] text-[#aaa] mt-2 font-mono">Available: ${available.toLocaleString("en-US",{minimumFractionDigits:2})} USDT</p>
-        </Card>
-        {/* Fee summary */}
-        <Card className="p-3">
-          <div className="flex justify-between text-xs mb-1.5"><span className="text-[#888]">Network</span><span className="text-[#111] font-mono">TRC20</span></div>
-          <div className="flex justify-between text-xs mb-1.5"><span className="text-[#888]">Network Fee</span><span className="text-[#111] font-mono">~{fee} USDT</span></div>
-          <div className="flex justify-between text-xs border-t border-[#f5f5f5] pt-1.5"><span className="text-[#888] font-medium">You receive</span><span className="text-[#00c896] font-mono font-semibold">{youReceive} USDT</span></div>
-        </Card>
-        <GreenBtn label="Submit Withdrawal" onClick={()=>navigate("tx-success")}/>
+        {status&&<p className={`text-xs rounded-xl px-3 py-2 border ${status.includes("submitted")?"text-[#007b5d] bg-[#00c896]/10 border-[#00c896]/20":"text-red-600 bg-red-50 border-red-200"}`}>{status}</p>}
+        <GreenBtn label={loading?"Submitting…":"Submit Test Withdrawal"} onClick={submit} disabled={loading||!Number(amount)||Number(amount)>available}/>
       </div>
     </div>
   );
@@ -937,23 +888,18 @@ function ReceiveScreen({ goBack }: { goBack:()=>void }) {
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
 function TransactionsScreen({ goBack }: { goBack:()=>void }) {
-  const [f,setF]=useState("All");
-  const icons:Record<string,string>={received:"↓",sent:"↑",staked:"◆",swapped:"⇄"};
-  const colors:Record<string,string>={received:"#00c896",sent:"#ef4444",staked:"#9945ff",swapped:"#f5a623"};
+  const [ledger,setLedger]=useState<LedgerEntry[]>([]); const [requests,setRequests]=useState<SandboxRequest[]>([]); const [error,setError]=useState("");
+  useEffect(()=>{getSandboxAccount().then(d=>{setLedger([...d.ledger].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)));setRequests([...d.requests].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)));}).catch(e=>setError(e.message));},[]);
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <DarkHeader left={<><BackButton onBack={goBack} light/><h1 className="text-base font-bold text-white ml-2">Transaction History</h1></>}/>
-      <div className="flex-1 overflow-y-auto bg-[#f4f5f7]">
-        <div className="flex gap-2 px-4 pt-3 pb-2 bg-white border-b border-[#f0f0f0]">{["All","Sent","Received"].map(t=><Chip key={t} label={t} active={f===t} onClick={()=>setF(t)}/>)}</div>
-        <div className="bg-white pb-24">
-          {TXS.map((t,i)=>(
-            <div key={i} className={`flex items-center gap-3 px-4 py-4 ${i<TXS.length-1?"border-b border-[#f5f5f5]":""}`}>
-              <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0" style={{background:colors[t.type]+"15",color:colors[t.type]}}>{icons[t.type]}</div>
-              <div className="flex-1"><p className="text-sm font-semibold text-[#111] capitalize">{t.type} {t.asset}</p><p className="text-xs text-[#aaa]">{t.date}</p></div>
-              <span className={`text-sm font-mono font-semibold ${t.amount>0?"text-[#00c896]":"text-red-500"}`}>{t.amount>0?"+":""}{t.amount.toFixed(4)} {t.asset}</span>
-            </div>
-          ))}
-        </div>
+      <DarkHeader left={<><BackButton onBack={goBack} light/><div className="ml-2"><h1 className="text-base font-bold text-white">Sandbox Ledger</h1><p className="text-[10px] text-[#888]">Auditable test events</p></div></>}/>
+      <div className="flex-1 overflow-y-auto bg-[#f4f5f7] px-4 py-4">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4 text-xs text-amber-800">All values are test-only TUSDT and have no cash value.</div>
+        {error&&<p className="text-xs text-red-600 mb-3">{error}</p>}
+        <p className="text-xs font-bold text-[#888] uppercase tracking-wider mb-2">Pending requests</p>
+        <Card className="overflow-hidden mb-5">{requests.length===0?<p className="p-4 text-xs text-[#aaa]">No requests yet.</p>:requests.map(r=><div key={r.id} className="p-4 border-b border-[#f0f0f0] last:border-0 flex items-center gap-3"><div className="flex-1"><p className="text-sm font-semibold capitalize">{r.type}</p><p className="text-[10px] text-[#aaa]">{new Date(r.createdAt).toLocaleString()}</p></div><div className="text-right"><p className="text-sm font-mono font-bold">{r.amount.toFixed(2)}</p><p className={`text-[10px] font-bold ${r.status==="approved"?"text-[#00c896]":r.status==="rejected"?"text-red-500":"text-amber-600"}`}>{r.status}</p></div></div>)}</Card>
+        <p className="text-xs font-bold text-[#888] uppercase tracking-wider mb-2">Posted ledger</p>
+        <Card className="overflow-hidden">{ledger.length===0?<p className="p-4 text-xs text-[#aaa]">No ledger entries yet.</p>:ledger.map(e=><div key={e.id} className="p-4 border-b border-[#f0f0f0] last:border-0"><div className="flex justify-between gap-3"><div><p className="text-sm font-semibold capitalize">{e.type.replaceAll("_"," ")}</p><p className="text-[10px] text-[#aaa] mt-0.5">{e.note}</p></div><p className={`text-sm font-mono font-bold ${e.amount>=0?"text-[#00c896]":"text-red-500"}`}>{e.amount>=0?"+":""}{e.amount.toFixed(2)}</p></div><p className="text-[10px] text-[#bbb] mt-2">Available {e.availableAfter.toFixed(2)} · Invested {e.investedAfter.toFixed(2)}</p></div>)}</Card>
       </div>
     </div>
   );
@@ -966,7 +912,7 @@ function TradeScreen({ navigate }: { navigate:(s:Screen)=>void }) {
     <div className="flex flex-col h-full overflow-hidden">
       <DarkHeader
         left={<div><h1 className="text-lg font-bold text-white">Invest</h1><p className="text-[10px] text-[#888]">NOVA INVEST managed portfolio</p></div>}
-        title={<><p className="text-[#aaa] text-xs mb-0.5">Portfolio Value</p><p className="text-2xl font-bold text-white font-mono">${total.toLocaleString("en-US",{minimumFractionDigits:2})}</p><p className="text-[#00c896] text-xs font-mono mt-0.5">+96.87% YTD</p></>}
+        title={<><p className="text-[#aaa] text-xs mb-0.5">Demo Market Portfolio</p><p className="text-2xl font-bold text-white font-mono">${total.toLocaleString("en-US",{minimumFractionDigits:2})}</p><p className="text-amber-400 text-xs font-mono mt-0.5">Illustrative data only</p></>}
       />
       <div className="flex-1 overflow-y-auto bg-[#f4f5f7] px-4 pt-4 pb-24">
         {/* Markets we trade */}
@@ -1079,7 +1025,7 @@ function AnalyticsScreen({ goBack }: { goBack:()=>void }) {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <DarkHeader left={<><BackButton onBack={goBack} light/><div className="ml-1"><h1 className="text-base font-bold text-white">Portfolio Analytics</h1></div></>}
-        title={<><p className="text-[#aaa] text-xs">Portfolio Value</p><p className="text-2xl font-bold text-white font-mono mt-0.5">${total.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</p><p className="text-[#00c896] text-xs font-mono">+12.48% (3M)</p></>}
+        title={<><p className="text-[#aaa] text-xs">Demo Portfolio Value</p><p className="text-2xl font-bold text-white font-mono mt-0.5">${total.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</p><p className="text-amber-400 text-xs font-mono">Illustrative data only</p></>}
       />
       <div className="flex-1 overflow-y-auto bg-[#f4f5f7] px-4 pt-4 pb-4 flex flex-col gap-3">
         <Card className="p-4"><Sparkline data={[18000,19500,19000,21000,20500,22000,total]} color="#00c896" w={320} h={80}/></Card>
@@ -1151,6 +1097,15 @@ function InvestScreen({ navigate, goBack }: { navigate:(s:Screen)=>void; goBack:
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
 function ProfileScreen({ navigate, logout, profile }: { navigate:(s:Screen)=>void; logout:()=>void; profile:UserProfile|null }) {
+  const [sandboxAccount,setSandboxAccount]=useState({available:0,invested:0});
+  useEffect(()=>{if(profile)getSandboxAccount().then(d=>setSandboxAccount(d.account)).catch(()=>{});},[profile]);
+  const profileItems=[
+    ...(profile?.role==="admin"?[{l:"Sandbox Admin",s:"admin"}]:[]),
+    {l:"My Network (Referrals)",s:"referral"},{l:"Portfolio Analytics",s:"analytics"},
+    {l:"Wallet",s:"wallet"},{l:"Transaction History",s:"transactions"},
+    {l:"KYC Verification",s:"kyc"},{l:"Security / 2FA",s:"security"},
+    {l:"Notifications",s:"notifications"},{l:"Help & Support",s:"help"},
+  ];
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <DarkHeader
@@ -1160,12 +1115,12 @@ function ProfileScreen({ navigate, logout, profile }: { navigate:(s:Screen)=>voi
       />
       <div className="flex-1 overflow-y-auto bg-[#f4f5f7] px-4 pt-4 pb-4">
         <div className="grid grid-cols-3 gap-3 mb-4">
-          {[["$4,823","Total Profit","#00c896"],["4","Open Trades","#111"],["67%","Win Rate","#f5a623"]].map(([v,k,c])=>(
+          {[[sandboxAccount.available.toFixed(0),"Available","#00c896"],[sandboxAccount.invested.toFixed(0),"Invested","#111"],[profile?.kycStatus==="approved"?"Yes":"No","Test KYC","#f5a623"]].map(([v,k,c])=>(
             <Card key={k} className="p-3 text-center"><p className="text-base font-bold font-mono" style={{color:c}}>{v}</p><p className="text-[10px] text-[#aaa] mt-0.5">{k}</p></Card>
           ))}
         </div>
         <Card className="overflow-hidden mb-3">
-          {[{l:"My Network (Referrals)",s:"referral"},{l:"Portfolio Analytics",s:"analytics"},{l:"Wallet",s:"wallet"},{l:"Transaction History",s:"transactions"},{l:"KYC Verification",s:"kyc"},{l:"Security / 2FA",s:"security"},{l:"Notifications",s:"notifications"},{l:"Help & Support",s:"help"}].map((item,i,arr)=>(
+          {profileItems.map((item,i,arr)=>(
             <button key={item.l} onClick={()=>navigate(item.s as Screen)} className={`w-full flex items-center gap-3 px-4 py-3.5 hover:bg-gray-50 transition-colors text-left ${i<arr.length-1?"border-b border-[#f0f0f0]":""}`}>
               <span className="text-sm font-medium text-[#111] flex-1">{item.l}</span>
               <svg viewBox="0 0 24 24" fill="none" stroke="#ccc" strokeWidth="2" className="w-4 h-4"><path d="M9 18l6-6-6-6" strokeLinecap="round"/></svg>
@@ -1921,6 +1876,87 @@ function ReferralScreen({ goBack, referralCode }: { goBack:()=>void; referralCod
   );
 }
 
+// ─── Sandbox Admin ────────────────────────────────────────────────────────────
+function AdminScreen({ goBack }: { goBack:()=>void }) {
+  const [profiles,setProfiles]=useState<UserProfile[]>([]);
+  const [requests,setRequests]=useState<SandboxRequest[]>([]);
+  const [investments,setInvestments]=useState<SandboxInvestment[]>([]);
+  const [userId,setUserId]=useState(""); const [amount,setAmount]=useState("");
+  const [market,setMarket]=useState("NYSE / NASDAQ sandbox pool"); const [profit,setProfit]=useState("");
+  const [busy,setBusy]=useState(false); const [message,setMessage]=useState("");
+  const load=useCallback(async()=>{
+    try {
+      const d=await getAdminOverview();
+      setProfiles(d.profiles); setRequests(d.requests.sort((a,b)=>b.createdAt.localeCompare(a.createdAt)));
+      setInvestments(d.investments.sort((a,b)=>b.createdAt.localeCompare(a.createdAt)));
+      setUserId(v=>v||d.profiles.find(p=>p.role!=="admin")?.id||d.profiles[0]?.id||"");
+    } catch(e) { setMessage(e instanceof Error?e.message:"Admin data failed to load."); }
+  },[]);
+  useEffect(()=>{load();},[load]);
+  async function act(work:()=>Promise<unknown>,success:string){
+    setBusy(true); setMessage("");
+    try { await work(); setMessage(success); await load(); }
+    catch(e) { setMessage(e instanceof Error?e.message:"Action failed."); }
+    finally { setBusy(false); }
+  }
+  const pending=requests.filter(r=>r.status==="pending");
+  const open=investments.filter(i=>i.status==="open");
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <DarkHeader left={<><BackButton onBack={goBack} light/><div className="ml-2"><h1 className="text-base font-bold text-white">Sandbox Admin</h1><p className="text-[10px] text-[#888]">Test operations and audit controls</p></div></>}/>
+      <div className="flex-1 overflow-y-auto bg-[#f4f5f7] px-4 py-4 pb-10">
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 mb-4"><p className="text-xs font-bold text-amber-800">NO REAL FUNDS</p><p className="text-xs text-amber-700 mt-1">All approvals and returns use TUSDT test credits only.</p></div>
+        {message&&<p className="text-xs bg-white border border-[#e5e7eb] rounded-xl p-3 mb-4 text-[#555]">{message}</p>}
+        <div className="grid grid-cols-3 gap-2 mb-5">
+          {[[profiles.length,"Users"],[pending.length,"Pending"],[open.length,"Open"]].map(([v,l])=><Card key={String(l)} className="p-3 text-center"><p className="text-xl font-black font-mono">{v}</p><p className="text-[10px] text-[#888]">{l}</p></Card>)}
+        </div>
+
+        <p className="text-xs font-bold text-[#888] uppercase tracking-wider mb-2">Approval queue</p>
+        <Card className="overflow-hidden mb-5">
+          {pending.length===0?<p className="p-4 text-xs text-[#aaa]">No pending requests.</p>:pending.map(r=>(
+            <div key={r.id} className="p-4 border-b border-[#f0f0f0] last:border-0">
+              <div className="flex justify-between gap-3"><div><p className="text-sm font-semibold">{r.userName}</p><p className="text-xs text-[#888] capitalize">{r.type} · {r.detail||"No reference"}</p></div><p className="text-sm font-mono font-bold">{r.amount.toFixed(2)}</p></div>
+              <div className="flex gap-2 mt-3">
+                <button disabled={busy} onClick={()=>act(()=>reviewSandboxRequest(r.id,"approved"),"Request approved and ledger updated.")} className="flex-1 py-2 rounded-lg bg-[#00c896] text-white text-xs font-bold disabled:opacity-50">Approve</button>
+                <button disabled={busy} onClick={()=>act(()=>reviewSandboxRequest(r.id,"rejected"),"Request rejected.")} className="flex-1 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs font-bold disabled:opacity-50">Reject</button>
+              </div>
+            </div>
+          ))}
+        </Card>
+
+        <p className="text-xs font-bold text-[#888] uppercase tracking-wider mb-2">Users and sandbox KYC</p>
+        <Card className="overflow-hidden mb-5">
+          {profiles.map(p=>(
+            <div key={p.id} className="p-4 border-b border-[#f0f0f0] last:border-0 flex items-center gap-3">
+              <div className="flex-1 min-w-0"><p className="text-sm font-semibold truncate">{p.fullName}</p><p className="text-[10px] text-[#aaa] font-mono">{p.referralCode} · {p.role||"user"}</p></div>
+              <button disabled={busy} onClick={()=>act(()=>updateSandboxKyc(p.id,p.kycStatus==="approved"?"pending":"approved"),"Sandbox KYC status updated.")} className={`px-3 py-2 rounded-lg text-[10px] font-bold ${p.kycStatus==="approved"?"bg-[#00c896]/10 text-[#00a77c]":"bg-gray-100 text-[#666]"}`}>{p.kycStatus==="approved"?"Approved":"Approve KYC"}</button>
+            </div>
+          ))}
+        </Card>
+
+        <p className="text-xs font-bold text-[#888] uppercase tracking-wider mb-2">Allocate test investment</p>
+        <Card className="p-4 mb-5 flex flex-col gap-3">
+          <select value={userId} onChange={e=>setUserId(e.target.value)} className="w-full bg-gray-50 border border-[#e5e7eb] rounded-xl px-3 py-3 text-sm outline-none">{profiles.map(p=><option key={p.id} value={p.id}>{p.fullName} · {p.referralCode}</option>)}</select>
+          <input value={amount} onChange={e=>setAmount(e.target.value.replace(/[^\d.]/g,""))} placeholder="Amount in TUSDT" inputMode="decimal" className="w-full bg-gray-50 border border-[#e5e7eb] rounded-xl px-3 py-3 text-sm font-mono outline-none"/>
+          <input value={market} onChange={e=>setMarket(e.target.value)} placeholder="Sandbox market" className="w-full bg-gray-50 border border-[#e5e7eb] rounded-xl px-3 py-3 text-sm outline-none"/>
+          <GreenBtn label={busy?"Working…":"Allocate Test Funds"} disabled={busy||!userId||!Number(amount)} onClick={()=>act(()=>allocateSandboxInvestment(userId,Number(amount),market),"Test investment allocated.")}/>
+        </Card>
+
+        <p className="text-xs font-bold text-[#888] uppercase tracking-wider mb-2">Open investments</p>
+        <Card className="overflow-hidden">
+          {open.length===0?<p className="p-4 text-xs text-[#aaa]">No open investments.</p>:open.map(i=>{
+            const user=profiles.find(p=>p.id===i.userId);
+            return <div key={i.id} className="p-4 border-b border-[#f0f0f0] last:border-0">
+              <div className="flex justify-between"><div><p className="text-sm font-semibold">{user?.fullName||"User"}</p><p className="text-[10px] text-[#888]">{i.market}</p></div><p className="text-sm font-mono font-bold">{i.principal.toFixed(2)}</p></div>
+              <div className="flex gap-2 mt-3"><input value={profit} onChange={e=>setProfit(e.target.value.replace(/[^\d.-]/g,""))} placeholder="Profit / loss" inputMode="decimal" className="flex-1 min-w-0 bg-gray-50 border border-[#e5e7eb] rounded-lg px-3 py-2 text-xs font-mono outline-none"/><button disabled={busy||profit===""} onClick={()=>act(()=>settleSandboxInvestment(i.id,Number(profit)),"Principal and test return posted to the ledger.")} className="px-3 rounded-lg bg-[#111] text-white text-xs font-bold disabled:opacity-50">Settle</button></div>
+            </div>;
+          })}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 // ─── TX Success ───────────────────────────────────────────────────────────────
 function TxSuccessScreen({ navigate }: { navigate:(s:Screen)=>void }) {
   return (
@@ -1931,7 +1967,7 @@ function TxSuccessScreen({ navigate }: { navigate:(s:Screen)=>void }) {
           <svg viewBox="0 0 24 24" fill="none" stroke="#00c896" strokeWidth="2.5" className="w-10 h-10"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </div>
         <h2 className="text-xl font-bold text-[#111] mb-2">Transaction Successful</h2>
-        <p className="text-sm text-[#888] mb-6">Your transaction has been processed successfully.</p>
+        <p className="text-sm text-[#888] mb-6">Your sandbox transaction simulation has completed.</p>
         <Card className="w-full p-4 mb-6 text-left">
           {[["Amount","0.0123 BTC"],["Network","Bitcoin (BTC)"],["Transaction ID","3fe...2e2"]].map(([k,v])=>(
             <div key={k} className="flex justify-between py-2.5 border-b border-[#f5f5f5] last:border-0">
@@ -2101,6 +2137,7 @@ export default function App() {
 
   return (
     <div className="h-full w-full bg-[#f4f5f7] text-[#111] flex flex-col overflow-hidden">
+      {profile&&<div className="flex-shrink-0 bg-amber-400 text-amber-950 text-[10px] font-black tracking-wider text-center py-1">SANDBOX · TEST CREDITS ONLY · NO REAL FUNDS</div>}
       <div className="flex-1 overflow-hidden flex flex-col" key={state.screen}>
         {state.screen==="splash"           &&<SplashScreen onDone={()=>{}}/>}
         {state.screen==="onboarding"       &&<OnboardingScreen navigate={navigate}/>}
@@ -2134,6 +2171,7 @@ export default function App() {
         {state.screen==="error"            &&<ErrorScreen navigate={navigate}/>}
         {state.screen==="profit-code"      &&<ProfitCodeScreen goBack={goBack}/>}
         {state.screen==="referral"         &&<ReferralScreen goBack={goBack} referralCode={profile?.referralCode}/>}
+        {state.screen==="admin"            &&profile?.role==="admin"&&<AdminScreen goBack={goBack}/>}
       </div>
       {showNav&&<BottomNav tab={state.mainTab} setTab={setTab}/>}
     </div>

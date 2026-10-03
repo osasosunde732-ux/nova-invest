@@ -11,6 +11,46 @@ export type UserProfile = {
   referredBy: string;
   createdAt: string;
   kycStatus: "not_submitted" | "pending" | "approved" | "rejected";
+  role: "user" | "admin";
+};
+
+export type SandboxAccount = {
+  available: number;
+  invested: number;
+  currency: "TUSDT";
+  updatedAt: string;
+};
+
+export type SandboxRequest = {
+  id: string;
+  userId: string;
+  userName: string;
+  type: "deposit" | "withdrawal";
+  amount: number;
+  detail: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+};
+
+export type LedgerEntry = {
+  id: string;
+  userId: string;
+  type: string;
+  amount: number;
+  availableAfter: number;
+  investedAfter: number;
+  note: string;
+  createdAt: string;
+};
+
+export type SandboxInvestment = {
+  id: string;
+  userId: string;
+  market: string;
+  principal: number;
+  status: "open" | "settled";
+  createdAt: string;
+  profit?: number;
 };
 
 async function request<T>(
@@ -58,4 +98,55 @@ export async function createAccount(input: {
 export async function getProfile() {
   const data = await request<{ profile: UserProfile }>("/me", {}, true);
   return data.profile;
+}
+
+export async function getSandboxAccount() {
+  return request<{ account: SandboxAccount; ledger: LedgerEntry[]; requests: SandboxRequest[] }>("/account", {}, true);
+}
+
+export async function createSandboxRequest(input: {
+  type: "deposit" | "withdrawal";
+  amount: number;
+  detail: string;
+}) {
+  return request<{ request: SandboxRequest }>("/requests", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }, true);
+}
+
+export async function getAdminOverview() {
+  return request<{
+    profiles: UserProfile[];
+    requests: SandboxRequest[];
+    investments: SandboxInvestment[];
+  }>("/admin/overview", {}, true);
+}
+
+export async function reviewSandboxRequest(id: string, decision: "approved" | "rejected") {
+  return request<{ request: SandboxRequest }>(`/admin/requests/${id}`, {
+    method: "POST",
+    body: JSON.stringify({ decision }),
+  }, true);
+}
+
+export async function updateSandboxKyc(id: string, status: "approved" | "rejected" | "pending") {
+  return request<{ profile: UserProfile }>(`/admin/users/${id}/kyc`, {
+    method: "POST",
+    body: JSON.stringify({ status }),
+  }, true);
+}
+
+export async function allocateSandboxInvestment(userId: string, amount: number, market: string) {
+  return request<{ investment: SandboxInvestment }>("/admin/investments", {
+    method: "POST",
+    body: JSON.stringify({ userId, amount, market }),
+  }, true);
+}
+
+export async function settleSandboxInvestment(id: string, profit: number) {
+  return request<{ investment: SandboxInvestment }>(`/admin/investments/${id}/settle`, {
+    method: "POST",
+    body: JSON.stringify({ profit }),
+  }, true);
 }
