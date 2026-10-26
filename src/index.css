@@ -22,6 +22,14 @@ body {
 .font-mono { font-family: 'JetBrains Mono', monospace !important; }
 ::-webkit-scrollbar { width: 0; height: 0; }
 
+.admin-grid {
+  background-image:
+    radial-gradient(circle at 18% 24%, rgba(52, 211, 153, 0.12), transparent 28%),
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: auto, 48px 48px, 48px 48px;
+}
+
 /* swirl pattern for dark header */
 .header-pattern {
   background-color: #0d0d0d;
