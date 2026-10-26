@@ -1,0 +1,35 @@
+name: Deploy Supabase Edge Function
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-edge-function:
+    name: Deploy make-server-cee2ad72
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Prepare function package
+        run: |
+          mkdir -p supabase/functions/make-server-cee2ad72
+          cp supabase/functions/server/index.tsx supabase/functions/make-server-cee2ad72/index.ts
+          cp supabase/functions/server/kv_store.tsx supabase/functions/make-server-cee2ad72/kv_store.tsx
+
+      - name: Deploy Edge Function
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase functions deploy make-server-cee2ad72 \
+            --project-ref druxtjllcqtzdgeqsqny
